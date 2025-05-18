@@ -1,79 +1,127 @@
 import path from 'path';
-import { SummarizationResult } from './llm-summarizer';
+import { SummarizationResult, DocumentInfo } from './llm-summarizer';
 import { extractTitleFromMarkdown } from './markdown-parser';
 
-export interface ToolPath {
-  path: string; // Relative path for accessing within the MCP tool
-  description: string; // Brief description of the document at that path
-  originalPath: string; // Full path on the original file system
-  title?: string; // Document title (if available)
-}
+// 定数
+const DEFAULT_TOOL_NAME = 'search-docs';
+const TOOL_PREFIX = 'search-';
+const TOOL_SUFFIX = '-docs';
+const SPACE_PATTERN = /\s+/g;
+const NON_ALPHANUMERIC_HYPHEN_PATTERN = /[^a-z0-9-]/g;
+const DEFAULT_DESCRIPTION_PREFIX = 'Document: ';
 
-export interface McpToolMetadata {
-  toolName: string; // MCP tool name (e.g., search-my-project-docs)
-  toolDescription: string; // MCP tool description (based on LLM summary)
-  availablePaths: ToolPath[]; // List of document paths accessible by the tool
+/**
+ * MCPツールで利用可能なパスの情報
+ */
+export interface ToolPath {
+  path: string; // MCPツール内でアクセスするための相対パス
+  description: string; // そのパスにあるドキュメントの簡潔な説明
+  originalPath: string; // 元のファイルシステム上の完全パス
+  title?: string; // ドキュメントのタイトル（利用可能な場合）
 }
 
 /**
- * Converts a project name to an MCP tool name
- * @param projectName Project name
- * @returns MCP tool name
+ * MCPツールのメタデータ
+ */
+export interface McpToolMetadata {
+  toolName: string; // MCPツール名（例：search-my-project-docs）
+  toolDescription: string; // MCPツールの説明（LLM要約に基づく）
+  availablePaths: ToolPath[]; // ツールでアクセス可能なドキュメントパスのリスト
+}
+
+/**
+ * プロジェクト名をケバブケースに変換する
+ * @param projectName プロジェクト名
+ * @returns ケバブケースに変換されたプロジェクト名
+ */
+function convertToKebabCase(projectName: string): string {
+  return projectName
+    .toLowerCase()
+    .replace(SPACE_PATTERN, '-')
+    .replace(NON_ALPHANUMERIC_HYPHEN_PATTERN, ''); // 英数字とハイフン以外を削除
+}
+
+/**
+ * プロジェクト名からMCPツール名を生成する
+ * @param projectName プロジェクト名
+ * @returns MCPツール名
  */
 export function generateToolName(projectName: string): string {
-  // Convert project name to kebab case
-  const kebabProjectName = projectName
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, ''); // Remove anything that's not alphanumeric or hyphen
+  // プロジェクト名をケバブケースに変換
+  const kebabProjectName = convertToKebabCase(projectName);
   
-  // Default value if it becomes an empty string
+  // 空文字列になった場合はデフォルト値を使用
   if (!kebabProjectName) {
-    return 'search-docs';
+    return DEFAULT_TOOL_NAME;
   }
   
-  return `search-${kebabProjectName}-docs`;
+  return `${TOOL_PREFIX}${kebabProjectName}${TOOL_SUFFIX}`;
 }
 
 /**
- * Generates MCP tool metadata from LLM summarization results and document information.
- * @param projectName Project name
- * @param summarizationResult Summarization result from LLM
- * @param markdownFiles Information about parsed Markdown files
- * @param docsRootDir Path to the root directory of documents (for relative path calculation)
- * @returns Generated MCP tool metadata
+ * LLM要約結果からツールの説明を生成する
+ * @param summarizationResult LLM要約結果
+ * @returns ツールの説明
+ */
+function generateToolDescription(summarizationResult: SummarizationResult): string {
+  let toolDescription = `${summarizationResult.summary}\n\n`;
+  toolDescription += `This tool provides access to documents on the following main topics:\n`;
+  
+  // トピックをリスト形式で追加
+  summarizationResult.topics.forEach(topic => {
+    toolDescription += `- ${topic}\n`;
+  });
+  
+  toolDescription += `\nYou can retrieve information by specifying a specific document path.`;
+  
+  return toolDescription;
+}
+
+/**
+ * ドキュメント情報からToolPathオブジェクトを生成する
+ * @param file ドキュメント情報
+ * @param docsRootDir ドキュメントのルートディレクトリパス
+ * @returns ToolPathオブジェクト
+ */
+function createToolPath(file: DocumentInfo, docsRootDir: string): ToolPath {
+  // docsRootDirからの相対パスを計算
+  const relativePath = path.relative(docsRootDir, file.path);
+  
+  // ファイルの内容からタイトルを抽出
+  const title = extractTitleFromMarkdown(file.content);
+  
+  return {
+    path: relativePath,
+    description: file.description || `${DEFAULT_DESCRIPTION_PREFIX}${path.basename(relativePath)}`,
+    originalPath: file.path,
+    title: title || undefined
+  };
+}
+
+/**
+ * LLM要約結果とドキュメント情報からMCPツールメタデータを生成する
+ * @param projectName プロジェクト名
+ * @param summarizationResult LLM要約結果
+ * @param markdownFiles 解析されたMarkdownファイルの情報
+ * @param docsRootDir ドキュメントのルートディレクトリパス（相対パス計算用）
+ * @returns 生成されたMCPツールメタデータ
  */
 export function generateMcpToolMetadata(
   projectName: string,
   summarizationResult: SummarizationResult,
-  markdownFiles: { path: string, content: string, description?: string }[],
+  markdownFiles: DocumentInfo[],
   docsRootDir: string
 ): McpToolMetadata {
-  // Generate tool name
+  // ツール名を生成
   const toolName = generateToolName(projectName);
 
-  // Tool description (utilizing LLM summary and topics)
-  let toolDescription = `${summarizationResult.summary}\n\n`;
-  toolDescription += `This tool provides access to documents on the following main topics:\n`;
-  summarizationResult.topics.forEach(topic => {
-    toolDescription += `- ${topic}\n`;
-  });
-  toolDescription += `\nYou can retrieve information by specifying a specific document path.`;
+  // ツールの説明を生成（LLM要約とトピックを利用）
+  const toolDescription = generateToolDescription(summarizationResult);
 
-  // Generate list of available paths
-  const availablePaths: ToolPath[] = markdownFiles.map(file => {
-    // Calculate relative path from docsRootDir
-    const relativePath = path.relative(docsRootDir, file.path);
-    // Extract title from file content
-    const title = extractTitleFromMarkdown(file.content);
-    
-    return {
-      path: relativePath,
-      description: file.description || `Document: ${path.basename(relativePath)}`,
-      originalPath: file.path,
-      title: title || undefined
-    };
-  });
+  // 利用可能なパスのリストを生成
+  const availablePaths: ToolPath[] = markdownFiles.map(file =>
+    createToolPath(file, docsRootDir)
+  );
 
   return {
     toolName,
