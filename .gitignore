@@ -40,6 +40,5 @@ Thumbs.db
 .npm
 .eslintcache
 
-# LLM
 .clinerules
 .roomodes
