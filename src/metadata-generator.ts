@@ -10,6 +10,11 @@ const SPACE_PATTERN = /\s+/g;
 const NON_ALPHANUMERIC_HYPHEN_PATTERN = /[^a-z0-9-]/g;
 const DEFAULT_DESCRIPTION_PREFIX = 'Document: ';
 
+// MCPツール名の制限
+const MCP_TOOL_NAME_MAX_LENGTH = 64;
+const MCP_TOOL_NAME_PREFIX = 'mcp__';
+const MCP_TOOL_NAME_SEPARATOR = '__';
+
 /**
  * MCPツールで利用可能なパスの情報
  */
@@ -42,6 +47,30 @@ function convertToKebabCase(projectName: string): string {
 }
 
 /**
+ * MCPツール名の長さをチェックする
+ * @param serverName サーバー名
+ * @param toolName ツール名
+ * @returns MCPツール名の完全な形式
+ * @throws Error 64文字制限を超える場合
+ */
+function validateMcpToolNameLength(serverName: string, toolName: string): string {
+  // MCPツール名の完全な形式: mcp__<サーバー名>__<ツール名>
+  const fullMcpToolName = `${MCP_TOOL_NAME_PREFIX}${serverName}${MCP_TOOL_NAME_SEPARATOR}${toolName}`;
+  
+  if (fullMcpToolName.length > MCP_TOOL_NAME_MAX_LENGTH) {
+    throw new Error(
+      `MCPツール名が64文字制限を超えています: "${fullMcpToolName}" (${fullMcpToolName.length}文字)\n` +
+      `制限: ${MCP_TOOL_NAME_MAX_LENGTH}文字\n` +
+      `サーバー名: "${serverName}" (${serverName.length}文字)\n` +
+      `ツール名: "${toolName}" (${toolName.length}文字)\n` +
+      `プロジェクト名またはツール名を短くしてください。`
+    );
+  }
+  
+  return fullMcpToolName;
+}
+
+/**
  * プロジェクト名からMCPツール名を生成する
  * @param projectName プロジェクト名
  * @returns MCPツール名
@@ -56,6 +85,20 @@ export function generateToolName(projectName: string): string {
   }
   
   return `${TOOL_PREFIX}${kebabProjectName}${TOOL_SUFFIX}`;
+}
+
+/**
+ * MCPツール名の64文字制限をチェックする
+ * @param projectName プロジェクト名（サーバー名として使用）
+ * @param toolName ツール名
+ * @throws Error 64文字制限を超える場合
+ */
+export function validateMcpToolName(projectName: string, toolName: string): void {
+  // プロジェクト名をサーバー名として使用（ケバブケースに変換）
+  const serverName = convertToKebabCase(projectName) || 'default-server';
+  
+  // MCPツール名の長さをチェック
+  validateMcpToolNameLength(serverName, toolName);
 }
 
 /**
@@ -105,6 +148,7 @@ function createToolPath(file: DocumentInfo, docsRootDir: string): ToolPath {
  * @param markdownFiles 解析されたMarkdownファイルの情報
  * @param docsRootDir ドキュメントのルートディレクトリパス（相対パス計算用）
  * @returns 生成されたMCPツールメタデータ
+ * @throws Error MCPツール名が64文字制限を超える場合
  */
 export function generateMcpToolMetadata(
   projectName: string,
@@ -114,6 +158,9 @@ export function generateMcpToolMetadata(
 ): McpToolMetadata {
   // ツール名を生成
   const toolName = generateToolName(projectName);
+
+  // MCPツール名の64文字制限をチェック
+  validateMcpToolName(projectName, toolName);
 
   // ツールの説明を生成（LLM要約とトピックを利用）
   const toolDescription = generateToolDescription(summarizationResult);

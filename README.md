@@ -126,6 +126,7 @@ This tool creates MCP servers through the following steps:
 3. **Metadata Generation**
    - Generate tool name, description, and list of available paths
    - Map each document's path, title, and description
+   - Validate MCP tool name length (64 character limit for `mcp__<server-name>__<tool-name>` format)
 
 4. **Server Code Generation**
    - Generate TypeScript code in ES module format
@@ -226,6 +227,25 @@ Error: Directory <path> not found.
 
 - Check that the path to the document directory is correct.
 - For relative paths, note that they are relative to the current directory.
+
+### MCP Tool Name Length Limit Error
+
+```
+Error: MCPツール名が64文字制限を超えています: "mcp__very-long-project-name__search-very-long-project-name-docs" (XX文字)
+制限: 64文字
+サーバー名: "very-long-project-name" (XX文字)
+ツール名: "search-very-long-project-name-docs" (XX文字)
+プロジェクト名またはツール名を短くしてください。
+```
+
+This error occurs when the generated MCP tool name exceeds the 64-character limit. The MCP tool name format is `mcp__<server-name>__<tool-name>`. To resolve this:
+
+1. Use a shorter project name with the `-p` option:
+   ```bash
+   npm start -- -d ./docs -p "short-name"
+   ```
+
+2. Or rename your document directory to a shorter name and use that as the project name.
 
 ### MCP Server Startup Error
 
