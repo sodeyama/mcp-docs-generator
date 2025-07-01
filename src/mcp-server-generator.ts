@@ -167,8 +167,14 @@ function getServerIndexTsContent(metadata: McpToolMetadata): string {
   const pathMapping = createPathMapping(metadata);
 
   return `
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+  ListToolsRequestSchema,
+  CallToolRequestSchema
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from 'fs/promises';
 import path from 'path';
@@ -192,78 +198,8 @@ const PATH_MAPPING = ${JSON.stringify(pathMapping, null, 2)};
 // 利用可能なパスのリスト
 const AVAILABLE_PATHS = Object.keys(PATH_MAPPING);
 
-// ドキュメントの内容を読み込む関数
-async function readMarkdownContent(originalPath) {
-  try {
-    return await fs.readFile(originalPath, 'utf-8');
-  } catch (e) {
-    await logDebug(\`Error reading original file \${originalPath} from server: \${e.message}\`);
-    throw new Error(\`Could not read document: \${originalPath}\`);
-  }
-}
-
-// ドキュメントリクエストを処理する関数
-async function handleDocumentRequest(documentPath) {
-  const pathInfo = PATH_MAPPING[documentPath];
-  
-  if (!pathInfo) {
-    throw new Error(\`Document not found for path: \${documentPath}\`);
-  }
-
-  // 元のファイルパスから内容を読み込む
-  const content = await readMarkdownContent(pathInfo.originalPath);
-
-  return {
-    content,
-    path: documentPath,
-    title: pathInfo.title
-  };
-}
-
-// MCPサーバーの作成
-const server = new McpServer({
-  name: TOOL_NAME,
-  version: "${SERVER_VERSION}"
-});
-
-// ドキュメント取得ツールの追加
-server.tool(
-  TOOL_NAME,
-  {
-    document_path: z.enum(AVAILABLE_PATHS)
-      .describe("Relative path of the document you want to retrieve. See tool description for available paths.")
-  },
-  async ({ document_path }) => {
-    if (!document_path) {
-      throw new Error("document_path is required.");
-    }
-    
-    // 利用可能なパスかどうかチェック
-    if (!AVAILABLE_PATHS.includes(document_path)) {
-      throw new Error(\`Invalid document_path: \${document_path}. Please choose from available paths.\`);
-    }
-    
-    // ドキュメントリクエストの処理
-    const result = await handleDocumentRequest(document_path);
-    
-    return {
-      content: [{
-        type: "text",
-        text: result.content
-      }],
-      metadata: {
-        path: result.path,
-        title: result.title
-      }
-    };
-  }
-);
-
-// サーバーの起動
-const port = process.env.PORT ? parseInt(process.env.PORT, 10) : ${DEFAULT_PORT};
-
 // デバッグ情報をファイルに記録する関数
-async function logDebug(message) {
+async function logDebug(message: string): Promise<void> {
   // デバッグモードが環境変数で有効になっている場合のみファイルに記録
   if (process.env.DEBUG === 'true') {
     try {
@@ -279,16 +215,132 @@ async function logDebug(message) {
   }
 }
 
-// トランスポートの設定と接続
-const transport = new StdioServerTransport();
-server.connect(transport).then(async () => {
-  // 標準出力に直接出力せず、デバッグログに記録
-  await logDebug(\`MCP Server for \${TOOL_NAME} listening\`);
-  await logDebug(\`Available tool: \${TOOL_NAME}\`);
-  await logDebug(\`Available paths: \${AVAILABLE_PATHS.length}\`);
-}).catch(async (err) => {
-  await logDebug(\`Error connecting to transport: \${err.message}\`);
+// ドキュメントの内容を読み込む関数
+async function readMarkdownContent(originalPath: string): Promise<string> {
+  try {
+    return await fs.readFile(originalPath, 'utf-8');
+  } catch (e) {
+    await logDebug(\`Error reading original file \${originalPath} from server: \${e instanceof Error ? e.message : String(e)}\`);
+    throw new Error(\`Could not read document: \${originalPath}\`);
+  }
+}
+
+// ドキュメントリクエストを処理する関数
+async function handleDocumentRequest(documentPath: string): Promise<{ content: string; path: string; title: string | null }> {
+  const pathInfo = PATH_MAPPING[documentPath as keyof typeof PATH_MAPPING];
+  
+  if (!pathInfo) {
+    throw new Error(\`Document not found for path: \${documentPath}\`);
+  }
+
+  // 元のファイルパスから内容を読み込む
+  const content = await readMarkdownContent(pathInfo.originalPath);
+
+  return {
+    content,
+    path: documentPath,
+    title: pathInfo.title
+  };
+}
+
+// サーバーの初期化
+const server = new Server(
+  {
+    name: TOOL_NAME,
+    version: "${SERVER_VERSION}"
+  },
+  {
+    capabilities: {
+      prompts: {},
+      tools: {}
+    }
+  }
+);
+
+// prompts/listハンドラーの実装（必須）
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return {
+    prompts: []  // プロンプトがない場合は空配列を返す
+  };
 });
+
+// prompts/getハンドラーの実装（オプションだが推奨）
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  // プロンプトがない場合はエラーを返す
+  throw new Error(\`Unknown prompt: \${request.params.name}\`);
+});
+
+// tools/listハンドラーの実装
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: TOOL_NAME,
+        description: TOOL_DESCRIPTION,
+        inputSchema: {
+          type: "object",
+          properties: {
+            document_path: {
+              type: "string",
+              enum: AVAILABLE_PATHS,
+              description: "Relative path of the document you want to retrieve. See tool description for available paths."
+            }
+          },
+          required: ["document_path"]
+        }
+      }
+    ]
+  };
+});
+
+// tools/callハンドラーの実装
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name !== TOOL_NAME) {
+    throw new Error(\`Unknown tool: \${request.params.name}\`);
+  }
+
+  const { document_path } = request.params.arguments as { document_path?: string };
+
+  if (!document_path) {
+    throw new Error("document_path is required.");
+  }
+  
+  // 利用可能なパスかどうかチェック
+  if (!AVAILABLE_PATHS.includes(document_path)) {
+    throw new Error(\`Invalid document_path: \${document_path}. Please choose from available paths.\`);
+  }
+  
+  // ドキュメントリクエストの処理
+  const result = await handleDocumentRequest(document_path);
+  
+  return {
+    content: [{
+      type: "text",
+      text: result.content
+    }],
+    _meta: {
+      path: result.path,
+      title: result.title
+    }
+  };
+});
+
+// サーバーの起動
+const transport = new StdioServerTransport();
+
+// トランスポートの設定と接続
+(async () => {
+  try {
+    await server.connect(transport);
+    await logDebug(\`MCP Server for \${TOOL_NAME} started successfully\`);
+    await logDebug(\`Available tool: \${TOOL_NAME}\`);
+    await logDebug(\`Available paths: \${AVAILABLE_PATHS.length}\`);
+  } catch (err) {
+    await logDebug(\`Error connecting to transport: \${err instanceof Error ? err.message : String(err)}\`);
+    console.error('Failed to start MCP server:', err);
+    process.exit(1);
+  }
+})();
 `;
 }
 

@@ -22,6 +22,7 @@ This tool is a system that automatically generates document search MCP tools for
    - Apply dynamic metadata to fixed server implementation
    - Reflect necessary settings
    - Generate startup scripts
+   - Compatible with the latest @modelcontextprotocol/sdk v1.x
 
 ## Installation
 
